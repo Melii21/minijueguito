@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Minijuego para mi princesa</title>
+<link href="https://fonts.googleapis.com/css2?family=Pacifico&family=Baloo+2:wght@600&display=swap" rel="stylesheet">
+
+<style>
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+canvas {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  background-image: url("fondo_ladrillos.png");
+  background-repeat: repeat;
+  image-rendering: pixelated;
+}
+</style>
+</head>
+
+<body>
+<canvas id="game"></canvas>
+
+<audio id="bgm" src="musica_fondo.mp3" loop></audio>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const bgm = document.getElementById("bgm");
+let musicaIniciada = false;
+
+function iniciarMusica(){
+  if(!musicaIniciada){
+    audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+    bgm.volume = 0.15;
+    bgm.play();
+    musicaIniciada = true;
+  }
+}
+
+canvas.width = innerWidth;
+canvas.height = innerHeight;
+
+// ================= IMÁGENES =================
+const imgPlayer = new Image(); imgPlayer.src = "personaje.png";
+const heartRed = new Image(); heartRed.src = "corazon_rojo.png";
+const heartBlack = new Image(); heartBlack.src = "corazon_negro.png";
+const fondoNuevo = new Image();
+fondoNuevo.src = "fondo_nuevo.png";
+
+const imgDiamante = new Image();
+imgDiamante.src = "diamante.png";
+
+const imgBomba = new Image();
+imgBomba.src = "bomba.png";
+
+const fondoBesos = new Image();
+fondoBesos.src = "fondo_besos.png"; // TU imagen nueva
+
+const heartGold = new Image();
+heartGold.src = "corazon_dorado.png";
+
+let usarFondoNuevo = false;
+let textoNegro = false;
+
+// ================= ESTADOS DEL JUEGO =================
+let juegoPausado = false;
+
+let etapaBesos = false;
+let besos = 0;
+
+let mostrarCartelDiamantes = false;
+let cartelDiamantesTimer = 0;
+
+let tiempoBesos = 0;
+let etapaBesosHecha = false;
+
+let shakeTime = 0;
+let shakePower = 10;
+
+const premiosImg = {
+  globos: (()=>{let i=new Image(); i.src="globos.png"; return i})(),
+  flores: (()=>{let i=new Image(); i.src="flores.png"; return i})(),
+  peluche:(()=>{let i=new Image(); i.src="peluche.png";return i})()
+};
+
+// ================= SONIDOS =================
+let audioCtx = null;
+
+function beep(freq, dur){
+
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.frequency.value = freq;
+  o.type = "triangle";
+  g.gain.value = 0.14;
+  o.connect(g);
+  g.connect(audioCtx.destination);
+  o.start();
+  o.stop(audioCtx.currentTime + dur);
+}
+
+const soundGood=()=>beep(900,0.15);
+const soundBad=()=>beep(200,0.25);
+const soundFreeze=()=>beep(500,0.4);
+const soundGold = () => beep(1500, 0.3);
+const soundGem = () => {
+  if(!audioCtx) return;
+
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.frequency.value = 1200;
+  o.type = "triangle";
+  g.gain.value = 0.20;
+  o.connect(g);
+  g.connect(audioCtx.destination);
+  o.start();
+  o.stop(audioCtx.currentTime + 0.18);
+};
+
+// ================= PERSONAJE =================
+let player = {
+  x: canvas.width/2 - 120,
+  y: canvas.height - 360 - 10,
+  w: 240,
+  h: 300,
+  feliz: 0,
+  triste: 0,
+  moving: false,
+  frozen: 0
+};
+
+// ================= CONTROLES =================
+let keys = {}, tiltX = 0;
+let spacePressed = false;
+
+addEventListener("keydown", e => {
+  keys[e.key] = true;
+  if (e.code === "Space") spacePressed = true;
+});
+
+addEventListener("keyup", e => {
+  keys[e.key] = false;
+  if (e.code === "Space") spacePressed = false;
+});
+
+canvas.addEventListener("mousemove",e=>{
+  if(player.frozen<=0){
+    player.x=e.clientX-player.w/2;
+    player.moving=true;
+  }
+});
+canvas.addEventListener("touchmove",e=>{
+  if(player.frozen<=0){
+    e.preventDefault();
+    player.x=e.touches[0].clientX-player.w/2;
+    player.moving=true;
+  }
+},{passive:false});
+window.addEventListener("deviceorientation",e=>{
+  if(e.gamma!==null) tiltX=e.gamma;
+});
+
+canvas.addEventListener("click", iniciarMusica);
+canvas.addEventListener("touchstart", iniciarMusica);
+canvas.addEventListener("touchstart", () => {
+  spacePressed = true;
+});
+
+canvas.addEventListener("click",()=>{
+  if(mostrarCartelDiamantes){
+    mostrarCartelDiamantes=false;
+    juegoPausado=false;
+  }
+});
+
+// ================= CORAZONES =================
+let corazones=[], puntos=0, toggleHeart=true;
+
+let diamantes = [];
+let contadorDiamantes = 0;
+
+let bomba = null;
+let bombasUsadas = 0;
+let lluvia = false;
+let juegoInfinito = false;
+
+function crearCorazon(){
+
+  // ETAPA BESOS
+  if(etapaBesos){
+    corazones.push({
+      x: Math.random()*(canvas.width-80),
+      y: -80,
+      size: 56,
+      speed: 7 + Math.random()*2,
+      tipo: "beso"
+    });
+    return;
+  }
+
+  // ETAPA NORMAL
+  const rand = Math.random();
+
+  let tipo = "negro";
+  if(rand < 0.05) tipo = "dorado";      // MUY RARO
+  else tipo = toggleHeart ? "rojo" : "negro";
+
+  corazones.push({
+  x: Math.random()*(canvas.width-(lluvia?50:90)),
+  y: -(lluvia?50:90),
+  size: lluvia ? 50 : 90,
+  speed: lluvia
+    ? 9 + Math.random()*4
+    : 2.5 + Math.random()*2.5 + puntos*0.06,
+  tipo,
+  skull: !lluvia && tipo==="rojo" && Math.random()<0.06,
+  glow: !lluvia && tipo==="rojo" && Math.random()<0.03
+});
+
+  toggleHeart = !toggleHeart;
+}
+
+function crearDiamante(){
+  diamantes.push({
+    x: Math.random()*(canvas.width-80),
+    y: Math.random()*(canvas.height-300)+120,
+    t: 180,
+    scale: 1,
+    dir: 1
+  });
+}
+   
+// ================= PREMIOS =================
+let premio={tipo:null,active:false,timer:0,scale:0};
+function activarPremio(tipo){
+  premio.tipo=tipo;
+  premio.active=true;
+  premio.timer=360;
+  premio.scale=0;
+}
+
+let premiosDados = {};
+
+function revisarPremio(){
+  if(puntos >= 10 && !premiosDados.globos){
+    activarPremio("globos");
+    premiosDados.globos = true;
+  }
+  if(puntos >= 30 && !premiosDados.flores){
+    activarPremio("flores");
+    premiosDados.flores = true;
+  }
+  if(puntos >= 60 && !premiosDados.peluche){
+    activarPremio("peluche");
+    usarFondoNuevo = true;
+    premiosDados.peluche = true;
+  }
+  if(puntos >= 100 && !premiosDados.final){
+    activarPremio("final");
+    premiosDados.final = true;
+  }
+if(puntos >= 150 && !etapaBesosHecha){
+  etapaBesos = true;
+  etapaBesosHecha = true;
+  juegoInfinito = false;
+  usarFondoNuevo = false;
+  corazones = [];
+  besos = 0;
+  tiempoBesos = 60 * 30; // 30 segundos
+}
+}
+
+canvas.addEventListener("click",()=>premio.active=false);
+
+// ================= CONFETTI =================
+let confetti=[];
+function lanzarConfetti(){
+  for(let i=0;i<140;i++){
+    confetti.push({
+      x:Math.random()*canvas.width,
+      y:-20,
+      vx:(Math.random()-0.5)*4,
+      vy:Math.random()*5+2,
+      size:Math.random()*6+3
+    });
+  }
+}
+
+/* ================= UPDATE ================= */
+
+function update(){
+  player.moving=false;
+if(!juegoPausado && Math.random() < 0.002 && diamantes.length < 1){
+  crearDiamante();
+}
+
+ // SI ESTÁ PAUSADO, SOLO BLOQUEAMOS MOVIMIENTO Y SPAWNS
+if(juegoPausado){
+  // PERO LOS TIMERS SIGUEN
+}
+
+  if(player.frozen<=0){
+    if(keys["ArrowLeft"]){player.x-=8;player.moving=true;}
+    if(keys["ArrowRight"]){player.x+=8;player.moving=true;}
+    player.x+=tiltX*0.4;
+  } else player.frozen--;
+
+  player.x=Math.max(0,Math.min(canvas.width-player.w,player.x));
+
+// ===== SPAWN GENERAL =====
+if(etapaBesos){
+  // MUCHOS BESOS
+  if(Math.random() < 0.05){
+    crearCorazon();
+  }
+}
+else if(juegoInfinito){
+  // TODO JUNTO, infinito
+  if(Math.random() < 0.03){
+    crearCorazon();
+  }
+}
+else{
+  // etapa normal
+  if(Math.random() < 0.025){
+    crearCorazon();
+  }
+}
+
+  corazones.forEach(c=>c.y+=c.speed);
+
+  const grab={x:player.x+player.w*0.3,y:player.y,w:player.w*0.4,h:player.h*0.35};
+
+  // ===== CORAZONES =====
+  corazones = corazones.filter(c=>{
+    if(
+      c.x < grab.x + grab.w &&
+      c.x + c.size > grab.x &&
+      c.y < grab.y + grab.h &&
+      c.y + c.size > grab.y
+    ){
+      if(c.tipo==="rojo"){
+        if(c.skull){
+          player.frozen=120;
+          soundFreeze();
+        }else{
+          puntos+=c.glow?2:1;
+          player.feliz=25;
+          soundGood();
+        }
+      }
+      else if(c.tipo==="negro"){
+        puntos=Math.max(0,puntos-1);
+        player.triste=25;
+        soundBad();
+      }
+      else if(c.tipo==="dorado"){
+        puntos+=5;
+        soundGold();
+      }
+      else if(c.tipo==="beso"){
+        besos++;
+        soundGood();
+      }
+      return false;
+    }
+    return c.y < canvas.height;
+  });
+
+  // ===== DIAMANTES (AQUÍ ES DONDE DEBE IR) =====
+  diamantes = diamantes.filter(d=>{
+    d.t--;
+
+    d.scale += 0.005 * d.dir;
+    if(d.scale > 1.1 || d.scale < 0.9) d.dir *= -1;
+
+    if(spacePressed){
+      contadorDiamantes++;
+
+      if(contadorDiamantes === 40){
+        mostrarCartelDiamantes = true;
+        cartelDiamantesTimer = 900; // 15s
+        juegoPausado = true;
+      }
+
+      soundGem();
+      spacePressed = false;
+      return false;
+    }
+
+    return d.t > 0;
+  });
+
+// ===== BOMBAS =====
+
+// ANTES DE 100 PUNTOS → solo 2 veces
+if(
+  !bomba &&
+  !etapaBesos &&
+  !juegoInfinito &&
+  bombasUsadas < 2 &&
+  puntos < 100 &&
+  Math.random() < 0.002
+){
+  bomba={
+    x:Math.random()*(canvas.width-100),
+    y:Math.random()*(canvas.height-300)+120,
+    t:180
+  };
+  bombasUsadas++;
+}
+
+// JUEGO INFINITO → aparecen seguido
+if(
+  !bomba &&
+  juegoInfinito &&
+  Math.random() < 0.003
+){
+  bomba={
+    x:Math.random()*(canvas.width-100),
+    y:Math.random()*(canvas.height-300)+120,
+    t:180
+  };
+}
+
+  if(bomba){
+    bomba.t--;
+    if(bomba.t <= 0){
+      lluvia = true;
+      shakeTime = 20;
+      setTimeout(()=>lluvia = false, 7000);
+      bomba = null;
+    }
+  }
+
+  confetti.forEach(p=>{p.x+=p.vx;p.y+=p.vy;});
+
+// ===== TIMER CARTEL DIAMANTES =====
+if(mostrarCartelDiamantes){
+  cartelDiamantesTimer--;
+  if(cartelDiamantesTimer<=0){
+    mostrarCartelDiamantes=false;
+    juegoPausado=false;
+  }
+}
+if(premio.active && premio.scale < 1){
+  premio.scale += 0.05;
+}
+if(player.feliz > 0) player.feliz--;
+if(player.triste > 0) player.triste--;
+revisarPremio();
+// COLOR DE TEXTO SEGÚN FONDO
+if(etapaBesos){
+  textoNegro = false; // fondo besos → blanco
+}
+else if(usarFondoNuevo || juegoInfinito){
+  textoNegro = true;  // fondo 2 → negro
+}
+else{
+  textoNegro = false; // ladrillos → blanco
+}
+if(etapaBesos){
+  tiempoBesos--;
+  if(tiempoBesos <= 0){
+    etapaBesos = false;
+    juegoInfinito = true;
+    usarFondoNuevo = true;
+  }
+}
+} 
+
+// ================= DRAW =================
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+let sx = 0, sy = 0;
+if(shakeTime > 0){
+  sx = (Math.random() - 0.5) * shakePower;
+  sy = (Math.random() - 0.5) * shakePower;
+  shakeTime--;
+}
+ctx.save();
+ctx.translate(sx, sy);
+
+ if(etapaBesos){
+  ctx.drawImage(fondoBesos, 0, 0, canvas.width, canvas.height);
+}
+else if(usarFondoNuevo || juegoInfinito){
+  ctx.drawImage(fondoNuevo, 0, 0, canvas.width, canvas.height);
+}
+// ===== COLOR DEL TEXTO SEGÚN ETAPA =====
+if(etapaBesos){
+  textoNegro = false;      // etapa besos → TEXTO BLANCO
+}
+else if(usarFondoNuevo || juegoInfinito){
+  textoNegro = true;       // fondo nuevo → TEXTO NEGRO
+}
+else{
+  textoNegro = false;      // fondo ladrillos → TEXTO BLANCO
+}
+
+  const bounce=player.moving?Math.sin(Date.now()/120)*6:0;
+  ctx.drawImage(imgPlayer,player.x,player.y+bounce,player.w,player.h);
+
+  if(player.feliz>0){ctx.font="36px Arial";ctx.fillText("😊",player.x+player.w/2-18,player.y+40);}
+  if(player.triste>0){ctx.font="36px Arial";ctx.fillText("😢",player.x+player.w/2-18,player.y+40);}
+
+corazones.forEach(c=>{
+  if(c.glow){
+    ctx.shadowColor="pink";
+    ctx.shadowBlur=25;
+  }
+
+  if(c.tipo==="rojo") ctx.drawImage(heartRed,c.x,c.y,c.size,c.size);
+  else if(c.tipo==="negro") ctx.drawImage(heartBlack,c.x,c.y,c.size,c.size);
+  else if(c.tipo==="dorado") ctx.drawImage(heartGold,c.x,c.y,c.size,c.size);
+  else if(c.tipo==="beso"){
+    ctx.font = c.size+"px Arial";
+    ctx.textAlign="center";
+    ctx.textBaseline="middle";
+    ctx.fillText("💋", c.x + c.size/2, c.y + c.size/2);
+  }
+
+  ctx.shadowBlur=0;
+
+    if(c.skull){
+      ctx.textAlign = "center";
+ctx.textBaseline = "middle";
+ctx.font = "28px Arial";
+ctx.fillText("💀", c.x + c.size/2, c.y + c.size/2);
+    }
+  });
+
+  // --- DIAMANTES ---
+  diamantes.forEach(d=>{
+    ctx.save();
+    ctx.translate(d.x+40, d.y+40);
+    ctx.scale(d.scale, d.scale);
+    ctx.drawImage(imgDiamante, -40, -40, 80, 80);
+    ctx.restore();
+  });
+
+  // --- BOMBA ---
+  if(bomba){
+    ctx.drawImage(imgBomba, bomba.x, bomba.y, 100, 100);
+    ctx.fillStyle = "white";
+    ctx.font = "32px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(Math.ceil(bomba.t/60), bomba.x+50, bomba.y+60);
+    ctx.textAlign = "left";
+  }
+
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.fillStyle = textoNegro ? "black" : "white";
+  ctx.font="24px Arial";
+  ctx.fillText("Puntos: "+puntos,20,32);
+if(etapaBesos || juegoInfinito){
+  ctx.fillText("Besos: " + besos, 20, 62);
+}
+  ctx.textAlign = "right";
+  ctx.fillStyle = textoNegro ? "black" : "white";
+  ctx.fillText("DIAMANTES: " + contadorDiamantes, canvas.width - 20, 32);
+  ctx.textAlign = "left";
+
+  if(premio.active){
+    ctx.fillStyle="rgba(0,0,0,0.6)";
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    ctx.fillStyle="white";
+    ctx.textAlign="center";
+
+    if(premio.tipo==="globos") ctx.font="28px Arial",ctx.fillText("MUY BIEN VIDAA! GANASTE:",canvas.width/2,canvas.height/2-330);
+    if(premio.tipo==="flores") ctx.font="28px Arial",ctx.fillText("LLEGASTE A LA SEGUNDA ETAPA MI LINDA. ESTE ES TU SEGUNDO PREMIO:",canvas.width/2,canvas.height/2-330);
+    if(premio.tipo==="peluche") ctx.font="28px Arial",ctx.fillText("YA CASI BEBÉ. PARA TI:",canvas.width/2,canvas.height/2-330);
+
+    if(premio.tipo!=="final"){
+      const img=premiosImg[premio.tipo];
+      const ratio=img.naturalWidth/img.naturalHeight;
+      const size=460;
+      ctx.save();
+      ctx.translate(canvas.width/2,canvas.height/2);
+      const s=premio.scale*(1+Math.sin(Date.now()/200)*0.06);
+      ctx.scale(s,s);
+      ctx.drawImage(img,-size/2,-(size/ratio)/2,size,size/ratio);
+      ctx.restore();
+    }
+  }
+
+  if(premio.tipo==="final" && premio.active){
+    if(confetti.length===0) lanzarConfetti();
+    confetti.forEach(p=>{
+      ctx.fillStyle=`hsl(${Math.random()*360},100%,60%)`;
+      ctx.fillRect(p.x,p.y,p.size,p.size);
+    });
+
+    ctx.fillStyle="white";
+    ctx.textAlign="center";
+    ctx.font="44px 'Pacifico'";
+    ctx.fillText("FELICES 8 MESES JUNTAS MI CORAZÓN 💖",canvas.width/2,canvas.height/2-140);
+    ctx.font="28px Arial";
+    ctx.fillText("FELICIDADES MI PEQUEÑA, LO HICISTE SÚPER, ESPERO TE HAYA ENTRETENIDO💕",canvas.width/2,canvas.height/2-90);
+    ctx.fillText("Eres la mejor novia del mundo, gracias por inspirarme a hacerte cositas originales.",canvas.width/2,canvas.height/2-40);
+    ctx.font="32px Arial";
+    ctx.fillText("PREPÁRATE PARA LO ÚLTIMOOOOOOOOOO",canvas.width/2,canvas.height/2+20);
+  }
+
+if(mostrarCartelDiamantes){
+  ctx.fillStyle="rgba(0,0,0,0.8)";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  ctx.fillStyle="white";
+  ctx.textAlign="center";
+  ctx.font="36px 'Baloo 2'";
+  ctx.fillText("ESAAAAAA ALCANZASTE LA META DE JOYASSS 💎",canvas.width/2,canvas.height/2-60);
+  ctx.font="24px 'Baloo 2'";
+  ctx.fillText("TE PASASTE EL JUEGOOO. ERES UNA CRACKK",canvas.width/2,canvas.height/2-10);
+  ctx.fillText("MÁNDAME CAPTURA Y PÍDEME TU PREMIO FINAL HERMOSA, TE AMO",canvas.width/2,canvas.height/2+30);
+}
+
+  ctx.restore();
+
+}
+
+// ================= LOOP =================
+function loop(){
+  update(); draw(); requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
+
